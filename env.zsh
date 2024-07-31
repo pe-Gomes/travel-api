@@ -6,3 +6,4 @@ export DATABASE_NAME="travel"
 export DATABASE_USER="admin"
 export DATABASE_PASSWORD="changeme"
 
+echo "Enviroment variables set for database: $DATABASE_NAME"
