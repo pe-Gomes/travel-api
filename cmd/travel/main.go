@@ -11,6 +11,7 @@ import (
 	"time"
 	"travel-api/internal/api"
 	"travel-api/internal/api/spec"
+	"travel-api/internal/mailer/mailpit"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -62,7 +63,9 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	si := api.NewAPI(pool, logger)
+	mailer := mailpit.NewMailpit(pool)
+
+	si := api.NewAPI(pool, logger, mailer)
 	router := chi.NewMux()
 	router.Use(middleware.RequestID, middleware.Recoverer, httputils.ChiLogger(logger))
 	router.Mount("/", spec.Handler(&si))

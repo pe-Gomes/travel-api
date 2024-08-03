@@ -13,5 +13,5 @@ WORKDIR /travel/cmd/travel
 RUN go build -o /travel/bin/travel .
 
 EXPOSE 8080
-ENTRYPOINT [ "travel/bin/main" ]
+ENTRYPOINT ["/travel/bin/travel"]
 
