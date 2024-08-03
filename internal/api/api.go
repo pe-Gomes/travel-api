@@ -187,6 +187,13 @@ func (api *API) GetTripsTripIDActivities(w http.ResponseWriter, r *http.Request,
 
 	for _, activity := range activities {
 		occursAt := activity.OccursAt.Time
+		date := time.Date(
+			occursAt.Year(),
+			occursAt.Month(),
+			occursAt.Day(),
+			0, 0, 0, 0,
+			occursAt.Location(),
+		)
 
 		innerActivity := spec.GetTripActivitiesResponseInnerArray{
 			ID:       activity.ID.String(),
@@ -194,7 +201,7 @@ func (api *API) GetTripsTripIDActivities(w http.ResponseWriter, r *http.Request,
 			Title:    activity.Title,
 		}
 
-		activityMap[occursAt] = append(activityMap[occursAt], innerActivity)
+		activityMap[date] = append(activityMap[date], innerActivity)
 	}
 
 	var outerActivities []spec.GetTripActivitiesResponseOuterArray
