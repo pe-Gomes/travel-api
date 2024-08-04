@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 	"travel-api/internal/api/spec"
 	"travel-api/internal/pgstore"
 
+	openapi_types "github.com/discord-gophers/goapi-gen/types"
 	"github.com/go-playground/validator/v10"
 	"github.com/goccy/go-json"
 	"github.com/google/uuid"
@@ -26,10 +28,16 @@ type store interface {
 	UpdateTrip(context.Context, pgstore.UpdateTripParams) error
 	GetTripActivities(context.Context, uuid.UUID) ([]pgstore.Activity, error)
 	CreateActivity(context.Context, pgstore.CreateActivityParams) (uuid.UUID, error)
+	InviteParticipantsToTrip(context.Context, []pgstore.InviteParticipantsToTripParams) (int64, error)
+	GetParticipants(context.Context, uuid.UUID) ([]pgstore.Participant, error)
+	ConfirmTrip(context.Context, pgstore.ConfirmTripParams) error
+	CreateTripLink(context.Context, pgstore.CreateTripLinkParams) (uuid.UUID, error)
+	GetTripLinks(context.Context, uuid.UUID) ([]pgstore.Link, error)
 }
 
 type mailer interface {
 	SendConfirmTripEmailToTripOwner(uuid.UUID) error
+	SendInvitationToParticipant(string, uuid.UUID) error
 }
 
 type API struct {
@@ -46,7 +54,7 @@ func NewAPI(pool *pgxpool.Pool, logger *zap.Logger, mailer mailer) API {
 }
 
 // Confirms a participant on a trip.
-// (PATCH /participants/{participantId}/confirm)
+
 func (api *API) PatchParticipantsParticipantIDConfirm(w http.ResponseWriter, r *http.Request, participantID string) *spec.Response {
 	id, err := uuid.Parse(string(participantID))
 	if err != nil {
@@ -250,29 +258,164 @@ func (api *API) PostTripsTripIDActivities(w http.ResponseWriter, r *http.Request
 // Confirm a trip and send e-mail invitations.
 // (GET /trips/{tripId}/confirm)
 func (api *API) GetTripsTripIDConfirm(w http.ResponseWriter, r *http.Request, tripID string) *spec.Response {
-	panic("not implemented") // TODO: Implement
+	id, err := uuid.Parse(tripID)
+	if err != nil {
+		return spec.GetTripsTripIDConfirmJSON400Response(spec.Error{Message: "uuid inválido"})
+	}
+
+	participants, err := api.store.GetParticipants(r.Context(), id)
+	if err != nil {
+		return spec.GetTripsTripIDConfirmJSON400Response(spec.Error{Message: "algo deu errado, tente novamente"})
+	}
+
+	if err := api.store.ConfirmTrip(r.Context(), pgstore.ConfirmTripParams{
+		IsConfirmed: true,
+	}); err != nil {
+		return spec.GetTripsTripIDConfirmJSON400Response(spec.Error{Message: "algo deu errado, tente novamente"})
+	}
+
+	for _, p := range participants {
+		go func() {
+			if err := api.mailer.SendInvitationToParticipant(string(p.Email), id); err != nil {
+				api.logger.Error("Failed to send invitation to Participant on PostTripsTripIDInvites: %w",
+					zap.Error(err),
+					zap.String("participand_id", p.TripID.String()),
+				)
+			}
+		}()
+	}
+
+	return spec.GetTripsTripIDConfirmJSON204Response(nil)
 }
 
 // Invite someone to the trip.
 // (POST /trips/{tripId}/invites)
 func (api *API) PostTripsTripIDInvites(w http.ResponseWriter, r *http.Request, tripID string) *spec.Response {
-	panic("not implemented") // TODO: Implement
+	id, err := uuid.Parse(tripID)
+	if err != nil {
+		return spec.PostTripsTripIDInvitesJSON400Response(spec.Error{Message: "uuid inválido"})
+	}
+
+	var body spec.InviteParticipantRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return spec.PostTripsTripIDInvitesJSON400Response(spec.Error{Message: "JSON inválido"})
+	}
+
+	if err := api.validator.Struct(body); err != nil {
+		return spec.PostTripsTripIDInvitesJSON400Response(spec.Error{Message: "Invalid input:" + err.Error()})
+	}
+
+	participant := make([]pgstore.InviteParticipantsToTripParams, 1)
+
+	participant[0] = pgstore.InviteParticipantsToTripParams{
+		TripID: id,
+		Email:  string(body.Email),
+	}
+
+	participantID, err := api.store.InviteParticipantsToTrip(r.Context(), participant)
+	if err != nil {
+		api.logger.Error("Failed to send invitation to Participant on PostTripsTripIDInvites: %w",
+			zap.Error(err),
+			zap.String("trip_id", id.String()))
+		return spec.PostTripsTripIDInvitesJSON400Response(spec.Error{Message: "Algo deu errado, tente novamente"})
+	}
+
+	go func() {
+		if err := api.mailer.SendInvitationToParticipant(string(body.Email), id); err != nil {
+			api.logger.Error("Failed to send invitation to Participant on PostTripsTripIDInvites: %w",
+				zap.Error(err),
+				zap.String("participand_id", fmt.Sprintf("%d", participantID)))
+		}
+	}()
+
+	return spec.PostTripsTripIDInvitesJSON201Response(nil)
 }
 
 // Get a trip links.
 // (GET /trips/{tripId}/links)
 func (api *API) GetTripsTripIDLinks(w http.ResponseWriter, r *http.Request, tripID string) *spec.Response {
-	panic("not implemented") // TODO: Implement
+	id, err := uuid.Parse(tripID)
+	if err != nil {
+		return spec.GetTripsTripIDLinksJSON400Response(spec.Error{Message: "uuid inválido"})
+	}
+
+	links, err := api.store.GetTripLinks(r.Context(), id)
+	if err != nil {
+		return spec.GetTripsTripIDLinksJSON400Response(spec.Error{Message: "Algo deu errado, tente novamente"})
+	}
+
+	linksRes := make([]spec.GetLinksResponseArray, len(links))
+
+	for i, link := range links {
+		linksRes[i] = spec.GetLinksResponseArray{
+			ID:    link.ID.String(),
+			Title: link.Title,
+			URL:   link.Url,
+		}
+	}
+
+	return spec.GetTripsTripIDLinksJSON200Response(spec.GetLinksResponse{
+		Links: linksRes,
+	})
 }
 
 // Create a trip link.
 // (POST /trips/{tripId}/links)
 func (api *API) PostTripsTripIDLinks(w http.ResponseWriter, r *http.Request, tripID string) *spec.Response {
-	panic("not implemented") // TODO: Implement
+	var body spec.CreateLinkRequest
+
+	id, err := uuid.Parse(tripID)
+	if err != nil {
+		return spec.PostTripsTripIDLinksJSON400Response(spec.Error{Message: "uuid inválido"})
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return spec.PostTripsTripIDLinksJSON400Response(spec.Error{Message: "JSON inválido"})
+	}
+
+	if err := api.validator.Struct(body); err != nil {
+		return spec.PostTripsTripIDLinksJSON400Response(spec.Error{Message: "Invalid input:" + err.Error()})
+	}
+
+	linkID, err := api.store.CreateTripLink(r.Context(), pgstore.CreateTripLinkParams{
+		TripID: id,
+		Title:  body.Title,
+		Url:    body.URL,
+	})
+	if err != nil {
+		return spec.PostTripsTripIDLinksJSON400Response(spec.Error{Message: "Algo deu errado, tente novamente"})
+	}
+
+	return spec.PostTripsTripIDLinksJSON201Response(spec.CreateLinkResponse{
+		LinkID: linkID.String(),
+	})
 }
 
 // Get a trip participants.
 // (GET /trips/{tripId}/participants)
 func (api *API) GetTripsTripIDParticipants(w http.ResponseWriter, r *http.Request, tripID string) *spec.Response {
-	panic("not implemented") // TODO: Implement
+	id, err := uuid.Parse(tripID)
+	if err != nil {
+		return spec.GetTripsTripIDParticipantsJSON400Response(spec.Error{Message: "uuid inválido"})
+	}
+
+	participants, err := api.store.GetParticipants(r.Context(), id)
+	if err != nil {
+		return spec.GetTripsTripIDParticipantsJSON400Response(spec.Error{Message: "Algo deu errado, tente novamente"})
+	}
+
+	participantsRes := make([]spec.GetTripParticipantsResponseArray, len(participants))
+
+	for i, participant := range participants {
+		participantsRes[i] = spec.GetTripParticipantsResponseArray{
+			ID:          participant.ID.String(),
+			Email:       openapi_types.Email(participant.Email),
+			IsConfirmed: participant.IsConfirmed,
+		}
+	}
+
+	return spec.GetTripsTripIDParticipantsJSON200Response(spec.GetTripParticipantsResponse{
+		Participants: participantsRes,
+	})
 }

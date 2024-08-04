@@ -25,6 +25,24 @@ func (q *Queries) ConfirmParticipant(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const confirmTrip = `-- name: ConfirmTrip :exec
+UPDATE trips
+SET 
+    "is_confirmed" = $1
+WHERE
+    id = $2
+`
+
+type ConfirmTripParams struct {
+	IsConfirmed bool
+	ID          uuid.UUID
+}
+
+func (q *Queries) ConfirmTrip(ctx context.Context, arg ConfirmTripParams) error {
+	_, err := q.db.Exec(ctx, confirmTrip, arg.IsConfirmed, arg.ID)
+	return err
+}
+
 const createActivity = `-- name: CreateActivity :one
 INSERT INTO activities
     ( "trip_id", "title", "occurs_at" ) VALUES

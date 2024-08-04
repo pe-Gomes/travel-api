@@ -2,7 +2,7 @@
   "openapi": "3.0.0",
   "info": {
     "title": "plann.er",
-    "description": "Especificações da API para o back-end da aplicação plann.er construída durante o NLW Journey da Rocketseat.",
+    "description": "Especificações da API para o back-end da aplicação plann.er.",
     "version": "1.0.0"
   },
   "paths": {

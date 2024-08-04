@@ -23,6 +23,13 @@ SET
 WHERE
     id = $5;
 
+-- name: ConfirmTrip :exec
+UPDATE trips
+SET 
+    "is_confirmed" = $1
+WHERE
+    id = $2;
+
 -- name: GetParticipant :one
 SELECT
     "id", "trip_id", "email", "is_confirmed"
